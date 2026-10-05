@@ -32,7 +32,9 @@ function buildPrompt() {
 (the letterhead at the top of the document).\n`
     : "";
 
-  return `You are extracting data from a Purchase Order (PO) PDF.
+  return `You are extracting data from a Purchase Order (PO) PDF. If the document
+is a similar commercial document instead (quotation, invoice, sales order), extract
+it the same way, using its document number as po_number.
 The customer is the company that ISSUED the PO — its letterhead/logo is at the
 top of the document. Many POs print their own "VENDOR:" or "SUPPLIER:" box;
 that is who the PO is addressed to, NOT the customer.
@@ -58,6 +60,56 @@ Return ONLY strict JSON in exactly this shape, no markdown:
 
 Set "confident" to true only if you found a clear po_number, customer and at
 least one line item. Never invent values — leave them empty/0 instead.`;
+}
+
+// Forces Gemini's reply into exactly this shape (structured output).
+const RESPONSE_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    po_number: { type: "STRING" },
+    customer: { type: "STRING" },
+    po_date: { type: "STRING" },
+    title: { type: "STRING" },
+    ship_to_address: { type: "STRING" },
+    currency: { type: "STRING" },
+    subtotal_amount: { type: "NUMBER" },
+    tax_amount: { type: "NUMBER" },
+    total_amount: { type: "NUMBER" },
+    payment_terms_days: { type: "NUMBER" },
+    line_items: {
+      type: "ARRAY",
+      items: {
+        type: "OBJECT",
+        properties: {
+          description: { type: "STRING" },
+          quantity: { type: "NUMBER" },
+          unit_price: { type: "NUMBER" },
+          amount: { type: "NUMBER" },
+        },
+        required: ["description"],
+      },
+    },
+    confident: { type: "BOOLEAN" },
+    reason: { type: "STRING" },
+  },
+  required: ["po_number", "customer", "line_items", "confident"],
+};
+
+// Even with a schema, models occasionally wrap the object in an array, nest
+// it under a key, or fence it in markdown. Dig the PO object out of any of those.
+function unwrapPO(value) {
+  if (Array.isArray(value)) return unwrapPO(value[0]);
+  if (value && typeof value === "object") {
+    if ("po_number" in value || "line_items" in value) return value;
+    const nested = Object.values(value).find((v) => v && typeof v === "object");
+    if (nested) return unwrapPO(nested);
+  }
+  return value ?? {};
+}
+
+function parseModelJson(raw) {
+  const cleaned = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "");
+  return unwrapPO(JSON.parse(cleaned));
 }
 
 function toNumber(value) {
@@ -87,7 +139,11 @@ async function extractPO(pdfBuffer) {
           ],
         },
       ],
-      generationConfig: { responseMimeType: "application/json", temperature: 0 },
+      generationConfig: {
+        responseMimeType: "application/json",
+        responseSchema: RESPONSE_SCHEMA,
+        temperature: 0,
+      },
     }),
   });
   if (!res.ok) throw new Error(`Gemini API error ${res.status}: ${(await res.text()).slice(0, 500)}`);
@@ -98,7 +154,7 @@ async function extractPO(pdfBuffer) {
 
   let parsed;
   try {
-    parsed = JSON.parse(text);
+    parsed = parseModelJson(text);
   } catch {
     throw new Error(`Gemini returned invalid JSON: ${text.slice(0, 300)}`);
   }
@@ -127,6 +183,7 @@ async function extractPO(pdfBuffer) {
     confident: parsed.confident === true,
     reason: str(parsed.reason),
     model: GEMINI_MODEL,
+    _raw: text,
   };
 }
 
@@ -179,9 +236,11 @@ async function writeToNotion(po, pdfBuffer, filename) {
   const fileUploadId = await uploadPdf(pdfBuffer, filename);
 
   const properties = {
-    "Project Title": { title: text(po.title || `${po.customer} — ${po.po_number}`) },
-    "Purchase Order No.": { rich_text: text(po.po_number) },
+    "Project Title": {
+      title: text(po.title || [po.customer, po.po_number].filter(Boolean).join(" — ") || filename),
+    },
   };
+  if (po.po_number) properties["Purchase Order No."] = { rich_text: text(po.po_number) };
   // Contract Value is pre-tax; use the grand total only when no tax is shown.
   const contractValue = po.subtotal_amount || (po.tax_amount ? 0 : po.total_amount);
   if (contractValue) properties["Contract Value"] = { number: contractValue };
@@ -194,7 +253,7 @@ async function writeToNotion(po, pdfBuffer, filename) {
   const summary = [
     `Created from an uploaded PO, read by Gemini (${po.model}).`,
     po.customer && `Customer: ${po.customer}`,
-    `PO number: ${po.po_number}`,
+    po.po_number && `PO number: ${po.po_number}`,
     po.po_date && `PO date: ${po.po_date}`,
     po.ship_to_address && `Ship to: ${po.ship_to_address}`,
   ]
@@ -216,8 +275,8 @@ async function writeToNotion(po, pdfBuffer, filename) {
       "Line Item": { number: i + 1 },
       Project: { relation: [{ id: page.id }] },
       "Record Type": { select: { name: "Activity" } },
-      "CUSTOMER PO": { rich_text: text(po.po_number) },
     };
+    if (po.po_number) props["CUSTOMER PO"] = { rich_text: text(po.po_number) };
     if (item.amount) props["Line Value"] = { number: item.amount };
     if (item.quantity) props["Remarks"] = { rich_text: text(`Qty: ${item.quantity}`) };
     await notion("/pages", "POST", { parent: { type: "data_source_id", data_source_id: JOB_DS }, properties: props });
@@ -277,17 +336,19 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && req.url === "/api/extract") {
       const { buffer, filename } = await readForm(req);
       const started = Date.now();
-      const po = await extractPO(buffer);
-      console.log(`[extract] ${filename}: PO ${po.po_number || "?"} (${Date.now() - started} ms)`);
+      const { _raw, ...po } = await extractPO(buffer);
+      console.log(
+        `[extract] ${filename}: PO ${po.po_number || "?"}, ${po.line_items.length} line(s) (${Date.now() - started} ms)`
+      );
+      if (!po.po_number) console.log(`[extract] ${filename}: raw Gemini reply: ${_raw.slice(0, 1500)}`);
       return sendJson(res, 200, { po, ms: Date.now() - started });
     }
 
     if (req.method === "POST" && req.url === "/api/notion") {
       const { form, buffer, filename } = await readForm(req);
       const po = JSON.parse(String(form.get("po") ?? "{}"));
-      if (!po.po_number) return sendJson(res, 400, { error: "No PO number to write" });
       const result = await writeToNotion(po, buffer, filename);
-      console.log(`[notion] PO ${po.po_number}: ${result.duplicate ? "duplicate" : "created"} ${result.url}`);
+      console.log(`[notion] PO ${po.po_number || "?"}: ${result.duplicate ? "duplicate" : "created"} ${result.url}`);
       return sendJson(res, 200, result);
     }
 

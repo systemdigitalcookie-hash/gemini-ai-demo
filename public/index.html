@@ -269,14 +269,13 @@
       setStep("s-gemini", "done");
       renderPO(po);
       $("meta").textContent = `Read by ${po.model} in ${(ms / 1000).toFixed(1)}s · ${file.name}`;
-      if (po.po_number) {
-        banner(po.confident ? "ok" : "warn",
-          po.confident ? "Extraction complete. Check the fields, then create it in Notion."
-                       : `Gemini wasn't fully confident: ${po.reason || "some fields are missing"}. You can still create it.`);
-        $("send").classList.remove("hidden");
+      if (po.po_number && po.confident) {
+        banner("ok", "Extraction complete. Check the fields, then create it in Notion.");
       } else {
-        banner("err", `No PO number found${po.reason ? ": " + po.reason : ""}. Nothing to send to Notion.`);
+        const why = po.reason || (po.po_number ? "some fields are missing" : "no PO number found");
+        banner("warn", `Gemini wasn't fully confident: ${why}. You can still create it in Notion.`);
       }
+      $("send").classList.remove("hidden");
       $("again").classList.remove("hidden");
     } catch (err) {
       setStep("s-gemini", null);
