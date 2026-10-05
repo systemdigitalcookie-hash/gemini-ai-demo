@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PO to Notion</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --surface: #ffffff;
+    --surface-2: #f1f3f6;
+    --border: #e3e6eb;
+    --text: #15181d;
+    --muted: #5f6774;
+    --accent: #1f6feb;
+    --accent-soft: #e8f0fe;
+    --ok: #1a7f37;
+    --ok-soft: #e6f4ea;
+    --warn: #9a6700;
+    --warn-soft: #fff4d6;
+    --err: #cf222e;
+    --err-soft: #ffebe9;
+    --radius: 14px;
+    --shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 4px 16px rgba(16, 24, 40, .06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e1116;
+      --surface: #161b22;
+      --surface-2: #1d232c;
+      --border: #2a313c;
+      --text: #e6e9ee;
+      --muted: #9aa4b2;
+      --accent: #4c8dff;
+      --accent-soft: #15233d;
+      --ok: #3fb950;
+      --ok-soft: #12261a;
+      --warn: #d29922;
+      --warn-soft: #2b2312;
+      --err: #f85149;
+      --err-soft: #2d1416;
+      --shadow: none;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 Inter, system-ui, -apple-system, sans-serif;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 32px 16px 64px; }
+  header h1 { font-size: 28px; margin: 0 0 6px; letter-spacing: -.02em; }
+  header p { margin: 0; color: var(--muted); }
+
+  .steps { display: flex; gap: 8px; margin: 24px 0; flex-wrap: wrap; }
+  .step {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 14px; border-radius: 999px;
+    background: var(--surface); border: 1px solid var(--border);
+    color: var(--muted); font-weight: 500; font-size: 14px;
+  }
+  .step .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border); }
+  .step.active { color: var(--accent); border-color: var(--accent); }
+  .step.active .dot { background: var(--accent); animation: pulse 1s infinite alternate; }
+  .step.done { color: var(--ok); border-color: var(--ok); }
+  .step.done .dot { background: var(--ok); }
+  .arrow { color: var(--muted); align-self: center; }
+  @keyframes pulse { from { opacity: .3; } to { opacity: 1; } }
+
+  .drop {
+    display: block;
+    border: 2px dashed var(--border); border-radius: var(--radius);
+    background: var(--surface); padding: 48px 16px; text-align: center;
+    cursor: pointer; transition: border-color .15s, background .15s;
+  }
+  .drop:hover, .drop.over { border-color: var(--accent); background: var(--accent-soft); }
+  .drop strong { display: block; font-size: 18px; margin-bottom: 4px; }
+  .drop span { color: var(--muted); }
+  .drop input { display: none; }
+
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 20px; }
+  @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); box-shadow: var(--shadow); padding: 20px; min-width: 0;
+  }
+  .card h2 { font-size: 15px; margin: 0 0 14px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+  iframe { width: 100%; height: 640px; border: 0; border-radius: 8px; background: var(--surface-2); }
+  @media (max-width: 860px) { iframe { height: 420px; } }
+
+  dl { display: grid; grid-template-columns: 140px 1fr; gap: 8px 12px; margin: 0 0 18px; }
+  dt { color: var(--muted); }
+  dd { margin: 0; font-weight: 500; white-space: pre-line; overflow-wrap: anywhere; }
+  .empty { color: var(--muted); font-weight: 400; font-style: italic; }
+
+  .table-wrap { overflow-x: auto; margin-bottom: 18px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  td.num, th.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+  .banner { padding: 10px 14px; border-radius: 10px; margin-bottom: 16px; font-size: 14px; }
+  .banner.ok { background: var(--ok-soft); color: var(--ok); }
+  .banner.warn { background: var(--warn-soft); color: var(--warn); }
+  .banner.err { background: var(--err-soft); color: var(--err); }
+
+  .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+  button, .btn {
+    appearance: none; border: 1px solid var(--border); background: var(--surface);
+    color: var(--text); font: inherit; font-weight: 600; padding: 10px 16px;
+    border-radius: 10px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 8px;
+  }
+  button.primary, .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .55; cursor: progress; }
+  .meta { color: var(--muted); font-size: 13px; margin-top: 12px; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Purchase Order → Notion</h1>
+    <p>Upload a PO PDF. Gemini reads it, then a Project and its Job lines are created in Notion.</p>
+  </header>
+
+  <div class="steps" aria-live="polite">
+    <div class="step" id="s-upload"><span class="dot"></span>1. Upload PO</div>
+    <span class="arrow">→</span>
+    <div class="step" id="s-gemini"><span class="dot"></span>2. Gemini reads it</div>
+    <span class="arrow">→</span>
+    <div class="step" id="s-notion"><span class="dot"></span>3. Create in Notion</div>
+  </div>
+
+  <label class="drop" id="drop">
+    <input type="file" id="file" accept="application/pdf,.pdf">
+    <strong>Drop a PO PDF here</strong>
+    <span>or click to choose a file</span>
+  </label>
+
+  <div class="grid hidden" id="results">
+    <section class="card">
+      <h2>Uploaded PO</h2>
+      <iframe id="preview" title="PO preview"></iframe>
+    </section>
+    <section class="card">
+      <h2>What Gemini extracted</h2>
+      <div id="status"></div>
+      <div id="extracted"></div>
+      <div class="actions">
+        <button class="primary hidden" id="send">Create in Notion</button>
+        <a class="btn primary hidden" id="open" target="_blank" rel="noopener">Open in Notion ↗</a>
+        <button id="again" class="hidden">Upload another</button>
+      </div>
+      <div class="meta" id="meta"></div>
+    </section>
+  </div>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  let currentFile = null;
+  let currentPO = null;
+
+  function setStep(id, state) {
+    const el = $(id);
+    el.classList.remove("active", "done");
+    if (state) el.classList.add(state);
+  }
+
+  function banner(kind, message) {
+    $("status").innerHTML = "";
+    if (!message) return;
+    const div = document.createElement("div");
+    div.className = `banner ${kind}`;
+    div.textContent = message;
+    $("status").appendChild(div);
+  }
+
+  const fmt = (n, currency) =>
+    n ? (currency ? currency + " " : "") + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "";
+
+  function el(tag, textValue, className) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    node.textContent = textValue;
+    return node;
+  }
+
+  function renderPO(po) {
+    const box = $("extracted");
+    box.innerHTML = "";
+
+    const fields = [
+      ["PO number", po.po_number],
+      ["Customer", po.customer],
+      ["PO date", po.po_date],
+      ["Title", po.title],
+      ["Ship to", po.ship_to_address],
+      ["Subtotal", fmt(po.subtotal_amount, po.currency)],
+      ["Tax / SST", fmt(po.tax_amount, po.currency)],
+      ["Total", fmt(po.total_amount, po.currency)],
+      ["Payment terms", po.payment_terms_days ? po.payment_terms_days + " days" : ""],
+    ];
+    const dl = document.createElement("dl");
+    for (const [label, value] of fields) {
+      dl.appendChild(el("dt", label));
+      dl.appendChild(value ? el("dd", value) : el("dd", "not found", "empty"));
+    }
+    box.appendChild(dl);
+
+    if (po.line_items.length) {
+      const wrap = document.createElement("div");
+      wrap.className = "table-wrap";
+      const table = document.createElement("table");
+      const head = table.createTHead().insertRow();
+      for (const [h, num] of [["#", false], ["Description", false], ["Qty", true], ["Unit price", true], ["Amount", true]]) {
+        const th = el("th", h, num ? "num" : "");
+        head.appendChild(th);
+      }
+      const body = table.createTBody();
+      po.line_items.forEach((li, i) => {
+        const row = body.insertRow();
+        row.appendChild(el("td", String(i + 1)));
+        row.appendChild(el("td", li.description));
+        row.appendChild(el("td", li.quantity ? String(li.quantity) : "", "num"));
+        row.appendChild(el("td", fmt(li.unit_price), "num"));
+        row.appendChild(el("td", fmt(li.amount), "num"));
+      });
+      wrap.appendChild(table);
+      box.appendChild(wrap);
+    }
+  }
+
+  async function post(url, form) {
+    const res = await fetch(url, { method: "POST", body: form });
+    const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    return data;
+  }
+
+  async function handleFile(file) {
+    if (!file) return;
+    if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
+      alert("Please choose a PDF file.");
+      return;
+    }
+    currentFile = file;
+    currentPO = null;
+
+    $("results").classList.remove("hidden");
+    $("preview").src = URL.createObjectURL(file);
+    $("extracted").innerHTML = "";
+    $("meta").textContent = "";
+    for (const id of ["send", "open", "again"]) $(id).classList.add("hidden");
+
+    setStep("s-upload", "done");
+    setStep("s-gemini", "active");
+    setStep("s-notion", null);
+    banner("warn", "Gemini is reading the PO…");
+
+    const form = new FormData();
+    form.append("file", file);
+    try {
+      const { po, ms } = await post("/api/extract", form);
+      currentPO = po;
+      setStep("s-gemini", "done");
+      renderPO(po);
+      $("meta").textContent = `Read by ${po.model} in ${(ms / 1000).toFixed(1)}s · ${file.name}`;
+      if (po.po_number) {
+        banner(po.confident ? "ok" : "warn",
+          po.confident ? "Extraction complete. Check the fields, then create it in Notion."
+                       : `Gemini wasn't fully confident: ${po.reason || "some fields are missing"}. You can still create it.`);
+        $("send").classList.remove("hidden");
+      } else {
+        banner("err", `No PO number found${po.reason ? ": " + po.reason : ""}. Nothing to send to Notion.`);
+      }
+      $("again").classList.remove("hidden");
+    } catch (err) {
+      setStep("s-gemini", null);
+      banner("err", err.message);
+      $("again").classList.remove("hidden");
+    }
+  }
+
+  $("send").addEventListener("click", async () => {
+    if (!currentFile || !currentPO) return;
+    $("send").disabled = true;
+    setStep("s-notion", "active");
+    banner("warn", "Creating the Project and Job lines in Notion…");
+    const form = new FormData();
+    form.append("file", currentFile);
+    form.append("po", JSON.stringify(currentPO));
+    try {
+      const result = await post("/api/notion", form);
+      setStep("s-notion", "done");
+      banner(result.duplicate ? "warn" : "ok",
+        result.duplicate
+          ? `PO ${currentPO.po_number} is already in Notion, so nothing new was created.`
+          : `Created a Project and ${result.jobs} Job line${result.jobs === 1 ? "" : "s"} in Notion.`);
+      $("open").href = result.url;
+      $("open").classList.remove("hidden");
+      $("send").classList.add("hidden");
+    } catch (err) {
+      setStep("s-notion", null);
+      banner("err", err.message);
+    } finally {
+      $("send").disabled = false;
+    }
+  });
+
+  $("again").addEventListener("click", () => {
+    $("file").value = "";
+    $("file").click();
+  });
+  $("file").addEventListener("change", (e) => handleFile(e.target.files[0]));
+
+  const drop = $("drop");
+  drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+  drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+  drop.addEventListener("drop", (e) => {
+    e.preventDefault();
+    drop.classList.remove("over");
+    handleFile(e.dataTransfer.files[0]);
+  });
+</script>
+</body>
+</html>

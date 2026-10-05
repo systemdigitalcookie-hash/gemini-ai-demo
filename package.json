@@ -1,0 +1,14 @@
+{
+  "name": "po2notion-demo",
+  "version": "1.0.0",
+  "description": "Upload a PO PDF, Gemini reads it, and a Project + Job lines are created in Notion",
+  "private": true,
+  "type": "module",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
