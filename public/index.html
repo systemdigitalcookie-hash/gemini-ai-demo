@@ -196,6 +196,8 @@
     const fields = [
       ["PO number", po.po_number],
       ["Customer", po.customer],
+      ["Customer address", po.customer_address],
+      ["Contact", [po.contact_person, po.customer_email, po.customer_phone].filter(Boolean).join("\n")],
       ["PO date", po.po_date],
       ["Title", po.title],
       ["Ship to", po.ship_to_address],
@@ -295,10 +297,14 @@
     try {
       const result = await post("/api/notion", form);
       setStep("s-notion", "done");
+      const customerNote = !result.customer ? ""
+        : result.customer.created
+          ? ` New customer "${result.customer.name}" was added to Customer DB and linked.`
+          : ` Linked to existing customer "${result.customer.name}".`;
       banner(result.duplicate ? "warn" : "ok",
         result.duplicate
           ? `PO ${currentPO.po_number} is already in Notion, so nothing new was created.`
-          : `Created a Project and ${result.jobs} Job line${result.jobs === 1 ? "" : "s"} in Notion.`);
+          : `Created a Project and ${result.jobs} Job line${result.jobs === 1 ? "" : "s"} in Notion.${customerNote}`);
       $("open").href = result.url;
       $("open").classList.remove("hidden");
       $("send").classList.add("hidden");

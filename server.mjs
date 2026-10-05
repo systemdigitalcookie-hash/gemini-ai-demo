@@ -18,6 +18,7 @@ const GEMINI_MODEL = env("GEMINI_MODEL", "gemini-3.5-flash-lite");
 const NOTION_API_KEY = env("NOTION_API_KEY");
 const PROJECT_DS = env("NOTION_PROJECT_DATA_SOURCE_ID", "0d5275a3-dd53-82d7-8c5b-87a972cb1a47");
 const JOB_DS = env("NOTION_JOB_DATA_SOURCE_ID", "f33275a3-dd53-8230-80d5-07caf490132b");
+const CUSTOMER_DS = env("NOTION_CUSTOMER_DATA_SOURCE_ID", "2ad275a3-dd53-8270-8f7e-8725b03787a3");
 const OWN_COMPANY_NAME = env("OWN_COMPANY_NAME", "");
 const DEMO_PASSWORD = env("DEMO_PASSWORD", "");
 
@@ -43,6 +44,10 @@ Return ONLY strict JSON in exactly this shape, no markdown:
 {
   "po_number": "string, the PO/order number, empty if not found",
   "customer": "string, the issuing company's name, empty if not found",
+  "customer_address": "string, the issuing company's own address (letterhead or Bill To), empty if not found",
+  "customer_email": "string, the issuing company's email, empty if not found",
+  "customer_phone": "string, the issuing company's phone number, empty if not found",
+  "contact_person": "string, the buyer's contact person / person who issued the PO, empty if not found",
   "po_date": "string, ISO 8601 date YYYY-MM-DD, empty if not found. Use locale cues (country, spelled-out months) to decide between DD/MM and MM/DD.",
   "title": "string, a short description of what the PO is for — its own title/subject/project line if it has one, else summarise the items in under 15 words",
   "ship_to_address": "string, the full Ship To / delivery address, empty if none",
@@ -68,6 +73,10 @@ const RESPONSE_SCHEMA = {
   properties: {
     po_number: { type: "STRING" },
     customer: { type: "STRING" },
+    customer_address: { type: "STRING" },
+    customer_email: { type: "STRING" },
+    customer_phone: { type: "STRING" },
+    contact_person: { type: "STRING" },
     po_date: { type: "STRING" },
     title: { type: "STRING" },
     ship_to_address: { type: "STRING" },
@@ -171,6 +180,10 @@ async function extractPO(pdfBuffer) {
   return {
     po_number: str(parsed.po_number),
     customer: str(parsed.customer),
+    customer_address: str(parsed.customer_address),
+    customer_email: str(parsed.customer_email),
+    customer_phone: str(parsed.customer_phone),
+    contact_person: str(parsed.contact_person),
     po_date: /^\d{4}-\d{2}-\d{2}$/.test(str(parsed.po_date)) ? str(parsed.po_date) : "",
     title: str(parsed.title),
     ship_to_address: str(parsed.ship_to_address),
@@ -229,10 +242,69 @@ async function findExistingProject(poNumber) {
   return result.results[0] ?? null;
 }
 
+// Company names on POs vary in punctuation and suffixes ("Sdn. Bhd." vs
+// "Sdn Bhd", "(M)"), and some Customer DB entries carry a " — PO123" tag.
+// Two names match only if they are identical after stripping those — no
+// fuzzy matching, so a near-miss creates a new customer instead of guessing.
+function normalizeCompany(name) {
+  return name
+    .split(/\s+[—–]\s+/)[0]
+    .toLowerCase()
+    .replace(/\(.*?\)/g, " ")
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9 ]/g, " ")
+    .replace(/\b(sdn|bhd|berhad|pte|ltd|limited|inc|llc|plc|corp|corporation|co|company)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function listCustomers() {
+  const customers = [];
+  let cursor;
+  do {
+    const page = await notion(`/data_sources/${CUSTOMER_DS}/query`, "POST", {
+      page_size: 100,
+      ...(cursor ? { start_cursor: cursor } : {}),
+    });
+    for (const row of page.results) {
+      const name = (row.properties?.Name?.title ?? []).map((t) => t.plain_text).join("");
+      if (name) customers.push({ id: row.id, url: row.url, name });
+    }
+    cursor = page.has_more ? page.next_cursor : undefined;
+  } while (cursor);
+  return customers;
+}
+
+// Returns { id, name, url, created } for the PO's customer, or null when the
+// PO has no customer name.
+async function findOrCreateCustomer(po) {
+  const key = normalizeCompany(po.customer);
+  if (!key) return null;
+
+  const matches = (await listCustomers()).filter((c) => normalizeCompany(c.name) === key);
+  // Prefer the plain entry over ones tagged with a PO number.
+  const match = matches.find((c) => !/\s[—–]\s/.test(c.name)) ?? matches[0];
+  if (match) return { ...match, created: false };
+
+  const properties = { Name: { title: text(po.customer) } };
+  if (po.customer_address) properties["Address"] = { rich_text: text(po.customer_address) };
+  if (po.ship_to_address) properties["Ship to"] = { rich_text: text(po.ship_to_address) };
+  if (po.contact_person) properties["Contact Person"] = { rich_text: text(po.contact_person) };
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(po.customer_email)) properties["Email"] = { email: po.customer_email };
+  if (po.customer_phone) properties["Telephone"] = { phone_number: po.customer_phone };
+
+  const page = await notion("/pages", "POST", {
+    parent: { type: "data_source_id", data_source_id: CUSTOMER_DS },
+    properties,
+  });
+  return { id: page.id, url: page.url, name: po.customer, created: true };
+}
+
 async function writeToNotion(po, pdfBuffer, filename) {
   const existing = await findExistingProject(po.po_number);
-  if (existing) return { url: existing.url, duplicate: true, jobs: 0 };
+  if (existing) return { url: existing.url, duplicate: true, jobs: 0, customer: null };
 
+  const customer = await findOrCreateCustomer(po);
   const fileUploadId = await uploadPdf(pdfBuffer, filename);
 
   const properties = {
@@ -241,6 +313,7 @@ async function writeToNotion(po, pdfBuffer, filename) {
     },
   };
   if (po.po_number) properties["Purchase Order No."] = { rich_text: text(po.po_number) };
+  if (customer) properties["Customer"] = { relation: [{ id: customer.id }] };
   // Contract Value is pre-tax; use the grand total only when no tax is shown.
   const contractValue = po.subtotal_amount || (po.tax_amount ? 0 : po.total_amount);
   if (contractValue) properties["Contract Value"] = { number: contractValue };
@@ -248,8 +321,7 @@ async function writeToNotion(po, pdfBuffer, filename) {
   if (po.total_amount) properties["Total Contract Value (Inclusive SST)"] = { number: po.total_amount };
   if (po.payment_terms_days) properties["Payment Terms (days)"] = { number: po.payment_terms_days };
 
-  // Project DB has no customer-name, PO-date or file property, so those go
-  // in the page body.
+  // Project DB has no PO-date or file property, so those go in the page body.
   const summary = [
     `Created from an uploaded PO, read by Gemini (${po.model}).`,
     po.customer && `Customer: ${po.customer}`,
@@ -282,7 +354,7 @@ async function writeToNotion(po, pdfBuffer, filename) {
     await notion("/pages", "POST", { parent: { type: "data_source_id", data_source_id: JOB_DS }, properties: props });
   }
 
-  return { url: page.url, duplicate: false, jobs: po.line_items.length };
+  return { url: page.url, duplicate: false, jobs: po.line_items.length, customer };
 }
 
 // ---------------------------------------------------------------- HTTP
@@ -348,7 +420,12 @@ const server = http.createServer(async (req, res) => {
       const { form, buffer, filename } = await readForm(req);
       const po = JSON.parse(String(form.get("po") ?? "{}"));
       const result = await writeToNotion(po, buffer, filename);
-      console.log(`[notion] PO ${po.po_number || "?"}: ${result.duplicate ? "duplicate" : "created"} ${result.url}`);
+      const customerNote = result.customer
+        ? `, customer ${result.customer.created ? "created" : "linked"}: ${result.customer.name}`
+        : "";
+      console.log(
+        `[notion] PO ${po.po_number || "?"}: ${result.duplicate ? "duplicate" : "created"} ${result.url}${customerNote}`
+      );
       return sendJson(res, 200, result);
     }
 

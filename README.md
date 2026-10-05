@@ -21,7 +21,8 @@ dependencies. Needs Node 20+.
 | Tax | `SST` | Project |
 | Grand total | `Total Contract Value (Inclusive SST)` | Project |
 | Payment terms | `Payment Terms (days)` | Project |
-| Customer, PO date, ship-to, the PDF | page body | Project |
+| Customer | `Customer` relation → matched or new Customer DB page | Project |
+| Customer name, PO date, ship-to, the PDF | page body | Project |
 | Line description | `Name` | Job |
 | Line number | `Line Item` | Job |
 | Line amount | `Line Value` | Job |
@@ -32,12 +33,22 @@ dependencies. Needs Node 20+.
 If a Project with the same PO number already exists, nothing new is created and
 the page links to the existing one.
 
+### Customer matching
+
+The PO's customer is looked up in **Customer DB** by name. Names match only if
+they're identical after ignoring case, punctuation, bracketed bits like `(M)`,
+company suffixes (`Sdn. Bhd.`, `Bhd`, `Ltd`…) and a trailing ` — PO123` tag.
+There is no fuzzy matching: "Air Selangor" will **not** match "Pengurusan Air
+Selangor Sdn. Bhd.". If nothing matches, a new customer is created with the
+Name, Address, Ship to, Contact Person, Email and Telephone found on the PO,
+and the Project is linked to it.
+
 ## Setup
 
 1. **Gemini key:** create one at <https://aistudio.google.com/apikey>.
 2. **Notion integration:** at <https://www.notion.so/profile/integrations>,
    create an internal integration with *Read*, *Insert* and *Update content*.
-   Then open the database that holds the Project and Job data sources →
+   Then open the database that holds the Project, Job and Customer data sources →
    `•••` → **Connections** → add the integration.
 3. Set the environment variables (see `.env.example`):
 
@@ -47,6 +58,7 @@ the page links to the existing one.
 | `NOTION_API_KEY` | yes | the integration's secret |
 | `NOTION_PROJECT_DATA_SOURCE_ID` | no | defaults to `0d5275a3-dd53-82d7-8c5b-87a972cb1a47` |
 | `NOTION_JOB_DATA_SOURCE_ID` | no | defaults to `f33275a3-dd53-8230-80d5-07caf490132b` |
+| `NOTION_CUSTOMER_DATA_SOURCE_ID` | no | defaults to `2ad275a3-dd53-8270-8f7e-8725b03787a3` |
 | `GEMINI_MODEL` | no | defaults to `gemini-3.5-flash-lite` |
 | `OWN_COMPANY_NAME` | no | the company receiving the POs, so Gemini never picks it as the customer |
 | `DEMO_PASSWORD` | no | if set, the page asks for this password (any username) |
