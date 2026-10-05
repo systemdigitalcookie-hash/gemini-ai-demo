@@ -66,3 +66,9 @@ it provides `PORT` automatically. Add the variables above on the service, then
 
 Set `DEMO_PASSWORD` if the URL will be shared, since anyone who can open the
 page can create pages in Notion.
+
+## Sample PO
+
+`samples/sample-po.pdf` is a made-up 3-line PO (from Lembah Jernih Water
+Services, RM 154,440 incl. SST) to try the demo with. `samples/sample-po.html`
+is its source if you want to tweak it and print a new PDF.
